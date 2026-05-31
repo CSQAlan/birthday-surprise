@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>给你的专属魔法</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #ui-container {
+            position: absolute;
+            top: 15%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+            width: 100%;
+            text-shadow: 0 0 15px rgba(255, 51, 102, 0.8);
+            transition: opacity 1s ease;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 5px;
+            letter-spacing: 4px;
+            color: #ffeb3b;
+            transition: color 1s ease;
+        }
+
+        #instruction {
+            font-size: 1.1rem;
+            color: #ffb3c6;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.5;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.5;
+            }
+        }
+
+        /* 摄像头小窗参考 */
+        .input_video {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            transform: scaleX(-1);
+            opacity: 0.3;
+            z-index: 20;
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+
+    <div id="ui-container">
+        <h1 id="main-title">闭合双指，感受心跳</h1>
+        <div id="instruction">面对镜头，用双指「拉开」解锁生日惊喜</div>
+    </div>
+
+    <video class="input_video" autoplay playsinline></video>
+
+    <script>
+        // ==========================================
+        // 1. 基础场景设置
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.02);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 20;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 星空背景点缀
+        const bgGeo = new THREE.BufferGeometry();
+        const bgCount = 5000;
+        const bgPos = new Float32Array(bgCount * 3);
+        for (let i = 0; i < bgCount * 3; i++) bgPos[i] = (Math.random() - 0.5) * 80;
+        bgGeo.setAttribute('position', new THREE.BufferAttribute(bgPos, 3));
+        const bgMat = new THREE.PointsMaterial({ color: 0xffaaaa, size: 0.05, transparent: true, opacity: 0.4 });
+        const bgParticles = new THREE.Points(bgGeo, bgMat);
+        scene.add(bgParticles);
+
+        // ==========================================
+        // 2. 核心数学模型计算 (预生成爱心和玫瑰坐标)
+        // ==========================================
+        const particleCount = 15000;
+        const mainGeo = new THREE.BufferGeometry();
+
+        const currentPos = new Float32Array(particleCount * 3);
+        const currentColors = new Float32Array(particleCount * 3);
+
+        // 状态A：爱心数据
+        const heartPos = new Float32Array(particleCount * 3);
+        const heartColors = new Float32Array(particleCount * 3);
+
+        // 状态B：玫瑰数据
+        const rosePos = new Float32Array(particleCount * 3);
+        const roseColors = new Float32Array(particleCount * 3);
+
+        // --- 生成 3D 爱心 (Taubin 方程) ---
+        let hIndex = 0;
+        const baseHeartColor = new THREE.Color(0xff1155);
+        while (hIndex < particleCount) {
+            const x = (Math.random() - 0.5) * 3;
+            const y = (Math.random() - 0.5) * 3;
+            const z = (Math.random() - 0.5) * 3;
+            const a = x * x + 2.25 * z * z + y * y - 1;
+            if (a * a * a - x * x * y * y * y - 0.1125 * z * z * y * y * y <= 0) {
+                heartPos[hIndex * 3] = x * 4;
+                heartPos[hIndex * 3 + 1] = y * 4 + 1; // 稍微往上偏移居中
+                heartPos[hIndex * 3 + 2] = z * 4;
+
+                // 给爱心添加稍微随机的粉红色差，增加质感
+                const colorOffset = Math.random() * 0.2;
+                heartColors[hIndex * 3] = baseHeartColor.r + colorOffset;
+                heartColors[hIndex * 3 + 1] = baseHeartColor.g + colorOffset;
+                heartColors[hIndex * 3 + 2] = baseHeartColor.b + colorOffset;
+
+                hIndex++;
+            }
+        }
+
+        // --- 生成 3D 玫瑰 (花朵 + 根茎 + 叶片) ---
+        const headCount = 10000;
+        const stemCount = 2000;
+        const leafCount = 3000;
+
+        const colorInner = new THREE.Color(0xff0044);
+        const colorOuter = new THREE.Color(0xff88aa);
+        const colorStem = new THREE.Color(0x228B22);
+        const colorLeaf = new THREE.Color(0x32CD32);
+
+        let rIndex = 0;
+        const scaleHead = 0.5;
+
+        // 花头
+        for (let i = 0; i < headCount; i++) {
+            const angle = i * 137.5 * (Math.PI / 180);
+            const radius = 0.15 * Math.sqrt(i) * scaleHead;
+            rosePos[rIndex * 3] = radius * Math.cos(angle);
+            rosePos[rIndex * 3 + 1] = (radius * radius * 0.15) + (Math.sin(radius * 3) * 0.2) + 2;
+            rosePos[rIndex * 3 + 2] = radius * Math.sin(angle);
+
+            const mixed = colorInner.clone().lerp(colorOuter, Math.min(radius / (15 * scaleHead), 1.0));
+            roseColors[rIndex * 3] = mixed.r; roseColors[rIndex * 3 + 1] = mixed.g; roseColors[rIndex * 3 + 2] = mixed.b;
+            rIndex++;
+        }
+        // 根茎
+        for (let i = 0; i < stemCount; i++) {
+            const y = -(i / stemCount) * 8 + 2;
+            rosePos[rIndex * 3] = Math.sin(y * 0.5) * 0.3 + (Math.random() - 0.5) * 0.15;
+            rosePos[rIndex * 3 + 1] = y;
+            rosePos[rIndex * 3 + 2] = Math.cos(y * 0.5) * 0.3 + (Math.random() - 0.5) * 0.15;
+            roseColors[rIndex * 3] = colorStem.r; roseColors[rIndex * 3 + 1] = colorStem.g; roseColors[rIndex * 3 + 2] = colorStem.b;
+            rIndex++;
+        }
+        // 叶片生成函数
+        function addLeaf(startY, angleOffset) {
+            for (let i = 0; i < leafCount / 2; i++) {
+                const r = Math.random();
+                const lx = r * 3.0;
+                const lz = (Math.random() - 0.5) * 1.5 * (1 - r);
+                const pitch = 0.6;
+                let x = lx * Math.cos(pitch);
+                let y = lx * Math.sin(pitch);
+                let z = lz;
+                const finalX = x * Math.cos(angleOffset) - z * Math.sin(angleOffset);
+                const finalZ = x * Math.sin(angleOffset) + z * Math.cos(angleOffset);
+                rosePos[rIndex * 3] = finalX + Math.sin(startY * 0.5) * 0.3;
+                rosePos[rIndex * 3 + 1] = y + startY;
+                rosePos[rIndex * 3 + 2] = finalZ + Math.cos(startY * 0.5) * 0.3;
+
+                const mixed = colorStem.clone().lerp(colorLeaf, r);
+                roseColors[rIndex * 3] = mixed.r; roseColors[rIndex * 3 + 1] = mixed.g; roseColors[rIndex * 3 + 2] = mixed.b;
+                rIndex++;
+            }
+        }
+        addLeaf(-1.5, 0);
+        addLeaf(-4.0, Math.PI);
+
+        // --- 赋予初始状态 (爱心) ---
+        for (let i = 0; i < particleCount * 3; i++) {
+            currentPos[i] = heartPos[i];
+            currentColors[i] = heartColors[i];
+        }
+
+        mainGeo.setAttribute('position', new THREE.BufferAttribute(currentPos, 3));
+        mainGeo.setAttribute('color', new THREE.BufferAttribute(currentColors, 3));
+        const mainMat = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending });
+        const mainParticles = new THREE.Points(mainGeo, mainMat);
+        scene.add(mainParticles);
+
+        // ==========================================
+        // 3. MediaPipe 手势识别逻辑
+        // ==========================================
+        const videoElement = document.querySelector('.input_video');
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+
+        let smoothedDistance = 0;
+        let isOpened = false;
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const thumbTip = landmarks[4];
+                const indexTip = landmarks[8];
+
+                const dx = thumbTip.x - indexTip.x;
+                const dy = thumbTip.y - indexTip.y;
+                const rawDistance = Math.sqrt(dx * dx + dy * dy);
+
+                smoothedDistance = smoothedDistance * 0.8 + rawDistance * 0.2;
+
+                // 距离超过阈值触发形态切换
+                if (smoothedDistance > 0.18 && !isOpened) {
+                    isOpened = true;
+                    document.getElementById('main-title').innerText = "🎈 生日快乐 🎈";
+                    document.getElementById('main-title').style.color = "#ff3366";
+                    document.getElementById('instruction').innerText = "捏合双指可变回爱心";
+                } else if (smoothedDistance < 0.08 && isOpened) {
+                    isOpened = false;
+                    document.getElementById('main-title').innerText = "闭合双指，感受心跳";
+                    document.getElementById('main-title').style.color = "#ffeb3b";
+                    document.getElementById('instruction').innerText = "面对镜头，用双指「拉开」解锁生日惊喜";
+                }
+            }
+        });
+
+        const camera_mp = new Camera(videoElement, { onFrame: async () => { await hands.send({ image: videoElement }); }, width: 320, height: 240 });
+        camera_mp.start();
+
+        // ==========================================
+        // 4. 动画渲染与状态插值
+        // ==========================================
+        let morphProgress = 0;
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            bgParticles.rotation.y += 0.001;
+            mainParticles.rotation.y -= 0.005; // 整体自转
+
+            // 计算进度插值 (弹性平滑过渡)
+            const targetProgress = isOpened ? 1 : 0;
+            morphProgress += (targetProgress - morphProgress) * 0.04;
+
+            const positions = mainParticles.geometry.attributes.position.array;
+            const colors = mainParticles.geometry.attributes.color.array;
+
+            // 爱心的心跳缩放效果
+            const heartbeat = 1 + Math.pow(Math.sin(time * 4), 6) * 0.15;
+
+            for (let i = 0; i < particleCount * 3; i++) {
+                // 如果是爱心形态 (morphProgress 接近 0)，附加心跳缩放
+                const targetHeartPos = heartPos[i] * (1 - morphProgress) * heartbeat + heartPos[i] * morphProgress;
+
+                positions[i] = THREE.MathUtils.lerp(targetHeartPos, rosePos[i], morphProgress);
+                colors[i] = THREE.MathUtils.lerp(heartColors[i], roseColors[i], morphProgress);
+            }
+
+            mainParticles.geometry.attributes.position.needsUpdate = true;
+            mainParticles.geometry.attributes.color.needsUpdate = true;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+
+</html>
